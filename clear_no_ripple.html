@@ -1,0 +1,221 @@
+<html>
+<body>
+
+<script type="text/javascript" src="ripple-0.12.2-rc1.js"></script>
+<script type="text/javascript">
+
+var Remote = ripple.Remote;
+
+var gatewayAccount = '';
+var gatewaySecret = '';
+var currency = '';
+var accountLines = [];
+
+var remote = new Remote({
+  trace: false,
+  servers: [
+    { host: 's1.ripple.com', port: 443, secure: true }
+  ]
+});
+
+remote.connect(function() {
+  console.log('rippled connected');
+});
+
+remote.once('ledger_closed', function(ledger) {
+  document.getElementById('start').disabled = false;
+});
+
+var buttonClick = function() {
+  gatewaySecret = document.getElementById('private_key').value;
+  gatewayAccount = document.getElementById('account_id').value;
+  currency = document.getElementById('currency').value;
+
+  document.getElementById('unsigned_blob').innerHTML = '';
+
+  if (!gatewaySecret) {
+    document.getElementById('unsigned_blob').innerHTML = 'No secret provided. Please provide a secret and try again';
+  } else {
+    // we need to provide a ledger_index or ledger_hash to make sure we
+    // get a complete and reliable result for all account lines
+    getAccountLines(gatewayAccount, 400, 'current', undefined, done); //13000068
+    document.getElementById('start').disabled = true;
+  }
+}
+
+var handleOutput = function(message) {
+  document.getElementById('unsigned_blob').innerHTML += message +"<br/>";
+}
+
+// summary
+var sum = {
+  failed : [],
+  success : []
+};
+
+function getAccountLines(account, limit, ledger_index, marker, callback) {
+  var options = {
+    account: account,
+    limit: limit,
+    ledger: ledger_index
+  }
+
+  if (marker) {
+    options.marker = marker;
+  }
+
+  var request = remote.requestAccountLines(options);
+
+  request.once('error', function(error) {
+    handleOutput('Request account lines error', error);
+  });
+
+  request.once('success', function(result) {
+    // console.log(JSON.stringify(result, null, 2));
+    handleOutput('received ' + result.lines.length + ' lines, for limit of ' + limit);
+    handleOutput('ledger_current_index: ' + result.ledger_current_index);
+    handleOutput('ledger_index: ' + result.ledger_index);
+    handleOutput('ledger_hash: ' + result.ledger_hash);
+    handleOutput('validated: ' + result.validated);
+    handleOutput('marker: ' + result.marker);
+
+    result.lines.forEach(function(line) {
+
+      // store all trustlines for the give currency which have no_ripple set
+      if (line.currency === currency && line.no_ripple) {
+        accountLines.push({
+          value:         line.balance,
+          currency:      line.currency,
+          counterparty:  line.account,
+          no_ripple:     line.no_ripple
+        });
+      }
+
+    });
+
+    // if there's a marker, keep on querying
+    if (result.marker) {
+      ledger_index = result.ledger_hash || result.ledger_index || result.ledger_current_index || ledger_index;
+      handleOutput('used ledger index', ledger_index);
+      getAccountLines(account, 400, ledger_index, result.marker, callback);
+    } else {
+      callback();
+    }
+  });
+
+  request.request();
+}
+
+function done() {
+  handleOutput(accountLines.length + ' found');
+  // to print the result
+  handleOutput(JSON.stringify(accountLines, null, 2));
+  extendTrustLineForAllAccounts(accountLines);
+}
+
+function extendTrustLineForAllAccounts(accountLines, i) {
+
+   var i = i || 0;
+    if (i >= accountLines.length) {
+      // we're done
+      handleOutput('ALL DONE');
+      handleOutput('All accounts have been processed');
+      handleOutput('Summary:');
+      handleOutput('- success: ' + sum.success.length);
+      handleOutput('- failed: ' + sum.failed.length);
+      handleOutput(JSON.stringify(sum, null ,2));
+      return;
+    }
+
+    var account = accountLines[i].counterparty;
+    extendTrustlineForAccount(account, function(err, result) {
+      if (err) {
+        handleOutput('submitting ClearNoRipple trustline for "'+account+'" failed with error: ' + err.engine_result);
+        sum.failed.push({
+          account : account,
+          result : err.engine_result,
+          hash : err.tx_json ? err.tx_json.hash : 'no hash'
+          });
+
+        if (err.result === 'tejSecretInvalid') {
+          handleOutput('<br/><br/>ERROR: aborting setting trustline, provided secret is invalid');
+          return;
+        }
+
+      } else {
+        handleOutput('ClearNoRipple trustline for "'+account+'" succeeded');
+        sum.success.push({
+          account : account,
+          result : result.engine_result,
+          hash : result.tx_json.hash
+        });
+      }
+
+      i++;
+
+      handleOutput('processed ' + String(i) + ' out of ' + String(accountLines.length) + '<br/>');
+
+      if (i%10 == 0) {
+        handleOutput('Summary:');
+        handleOutput('- success: ' + sum.success.length);
+        handleOutput('- failed: ' + sum.failed.length);
+        handleOutput(JSON.stringify(sum, null ,2));
+      }
+
+      extendTrustLineForAllAccounts(accountLines, i);
+
+      });
+
+}
+
+
+function extendTrustlineForAccount(account, callback) {
+
+  handleOutput('submitting ClearNoRipple trustline for account "'+account+'"');
+
+  var transaction = new ripple.Transaction(remote);
+
+  var limit = [
+    '0',
+    currency,
+    account
+  ].join('/');
+
+  transaction.trustSet(gatewayAccount, limit);
+  transaction.setFlags(ripple.Transaction.flags.TrustSet.ClearNoRipple);
+  transaction.secret(gatewaySecret);
+
+  var request = transaction.submit();
+
+  request.on('error', function(error) {
+    callback(error);
+  });
+
+  request.on('success', function(message) {
+    callback(null, message);
+  });
+
+}
+
+</script>
+
+<p>
+  Enter account id: <input type="text" name="account_id" id="account_id" ="width:300px;">
+</p>
+<p>
+  Enter private key: <input type="text" name="private_key" id="private_key" ="width:300px;">
+</p>
+<p>
+  Enter currency: <input type="text" name="currency" id="currency" ="width:50px;">
+</p>
+
+<p>
+  <button id="start" onclick="buttonClick()" disabled=true>Clear no_ripple flags</button>
+</p>
+
+<pre>
+  <div id="unsigned_blob" style="padding-top:20px"></div>
+</pre>
+
+</body>
+</html>
