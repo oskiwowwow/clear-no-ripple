@@ -38,7 +38,7 @@ var buttonClick = function() {
   } else {
     // we need to provide a ledger_index or ledger_hash to make sure we
     // get a complete and reliable result for all account lines
-    getAccountLines(gatewayAccount, 400, 'current', undefined, done); //13000068
+    getAccountLines(gatewayAccount, 400, 'validated', undefined, done); //13000068
     document.getElementById('start').disabled = true;
   }
 }
