@@ -36,8 +36,7 @@ var buttonClick = function() {
   if (!gatewaySecret) {
     document.getElementById('unsigned_blob').innerHTML = 'No secret provided. Please provide a secret and try again';
   } else {
-    // we need to provide a ledger_index or ledger_hash to make sure we
-    // get a complete and reliable result for all account lines
+    //get the account lines available in the last validated ledger, in sets of 400
     getAccountLines(gatewayAccount, 400, 'validated', undefined, done); //13000068
     document.getElementById('start').disabled = true;
   }
@@ -53,6 +52,9 @@ var sum = {
   success : []
 };
 
+//Each call to getAccountLines sends a request to the server to get a batch of trustlines,
+////filters them, and pushes the result to the accountLines[] array.
+//If the result includes a marker, it calls itself recursively until the full set has been collected.
 function getAccountLines(account, limit, ledger_index, marker, callback) {
   var options = {
     account: account,
@@ -71,7 +73,6 @@ function getAccountLines(account, limit, ledger_index, marker, callback) {
   });
 
   request.once('success', function(result) {
-    // console.log(JSON.stringify(result, null, 2));
     handleOutput('received ' + result.lines.length + ' lines, for limit of ' + limit);
     handleOutput('ledger_current_index: ' + result.ledger_current_index);
     handleOutput('ledger_index: ' + result.ledger_index);
@@ -113,6 +114,10 @@ function done() {
   extendTrustLineForAllAccounts(accountLines);
 }
 
+//extendTrustLineForAllAccounts() iterates through the set of accountLines and submits a 
+////TrustSet TX with 'ClearNoRipple' for each one.
+//Each request is given a callback which triggers a recursive call to 
+////extendTrustLineForAllAccounts upon success.
 function extendTrustLineForAllAccounts(accountLines, i) {
 
    var i = i || 0;
