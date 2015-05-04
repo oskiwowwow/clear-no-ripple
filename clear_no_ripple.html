@@ -81,9 +81,8 @@ function getAccountLines(account, limit, ledger_index, marker, callback) {
     handleOutput('marker: ' + result.marker);
 
     result.lines.forEach(function(line) {
-
-      // store all trustlines for the give currency which have no_ripple set
-      if (line.currency === currency && line.no_ripple) {
+      // store all trustlines for the give currency which 1) have no_ripple set and 2) have a gateway-side limit of zero
+      if (line.currency === currency && line.no_ripple && line.limit === '0') {
         accountLines.push({
           value:         line.balance,
           currency:      line.currency,
@@ -91,7 +90,6 @@ function getAccountLines(account, limit, ledger_index, marker, callback) {
           no_ripple:     line.no_ripple
         });
       }
-
     });
 
     // if there's a marker, keep on querying
